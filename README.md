@@ -1,50 +1,50 @@
 # MouseBot
 
-Fare belirli bir süre hareketsiz kaldığında imleci otomatik olarak çok az hareket ettirerek Windows'un uykuya geçmesini, ekranın kapanmasını veya kilitlenmesini engelleyen küçük bir sistem tepsisi uygulaması.
+A small system tray app that keeps Windows from going to sleep, turning off the screen, or locking by nudging the cursor very slightly whenever the mouse has been idle for a set amount of time.
 
-## Özellikler
+## Features
 
-- Ayarlanabilir hareketsizlik süresi (varsayılan 4 dakika)
-- Üç hareket türü: görünmez, küçük fare hareketi, F15 tuş sinyali
-- Windows güç API'si ile uyku ve ekran kapanmasını engelleme
-- Çalışma saati / gün zamanlaması, pildeyken beklemeye geçme
-- Geçici duraklatma, `Ctrl+Alt+M` kısayolu
-- Açık / koyu tema (sistemi takip eder)
-- 7 dil: Türkçe, English, Deutsch, Español, Français, Русский, 中文
-- Yönetici izni gerektirmeyen kurulum sihirbazı; Windows "Uygulamalar" listesinden kaldırılabilir
+- Adjustable idle time (default 4 minutes)
+- Three movement types: invisible, small mouse movement, F15 key signal
+- Prevents sleep and display shutdown via the Windows power API
+- Working hours / day scheduling, pauses while on battery
+- Temporary pause, `Ctrl+Alt+M` hotkey
+- Light / dark theme (follows the system)
+- 7 languages: Türkçe, English, Deutsch, Español, Français, Русский, 中文
+- Setup wizard that doesn't require administrator rights; can be uninstalled from the Windows "Apps" list
 
-## Kurulum
+## Installation
 
-1. [`dist/MouseBotSetup.exe`](dist/MouseBotSetup.exe) dosyasını indirin (dosya sayfasında **Download raw file**) ya da depoyu klonlayıp `dist` klasörünü açın.
-2. `MouseBotSetup.exe`'yi çalıştırın ve **İleri > Kur > Bitir** ile kurulumu tamamlayın.
+1. Download [`dist/MouseBotSetup.exe`](dist/MouseBotSetup.exe) (**Download raw file** on the file page), or clone the repository and open the `dist` folder.
+2. Run `MouseBotSetup.exe` and complete the setup with **Next > Install > Finish**.
 
-Yönetici izni gerekmez. Kurulumdan sonra MouseBot Başlat menüsünde ve sistem tepsisinde (sağ alttaki fare simgesi) yer alır; Windows **Ayarlar > Uygulamalar** bölümünden kaldırılabilir.
+No administrator rights are required. After installation, MouseBot appears in the Start menu and in the system tray (the mouse icon at the bottom right); it can be uninstalled from Windows **Settings > Apps**.
 
-> Kurulum dosyası dijital olarak imzalı olmadığı için Windows SmartScreen "Windows bilgisayarınızı korudu" uyarısı gösterebilir. **Ek bilgi > Yine de çalıştır** ile devam edebilirsiniz.
+> Because the installer is not digitally signed, Windows SmartScreen may show a "Windows protected your PC" warning. Click **More info > Run anyway** to continue.
 
-## Derleme
+## Building
 
-Ek bir SDK gerekmez; Windows ile gelen .NET Framework 4 derleyicisi kullanılır.
+No additional SDK is needed; it uses the .NET Framework 4 compiler that ships with Windows.
 
 ```bat
 build.bat
 ```
 
-Çıktılar:
+Outputs:
 
-- `MouseBot.exe`: uygulama
-- `MouseBotSetup.exe`: uygulamayı içinde taşıyan kurulum sihirbazı (ayrıca `dist/` klasörüne kopyalanır)
+- `MouseBot.exe`: the application
+- `MouseBotSetup.exe`: setup wizard that bundles the application (also copied to the `dist/` folder)
 
-## Dosyalar
+## Files
 
-| Dosya | Açıklama |
+| File | Description |
 |---|---|
-| `MouseBot.cs` | Uygulama, arayüz ve çeviriler |
-| `Setup.cs` | Kurulum / kaldırma sihirbazı |
-| `AppInfo.cs` | Uygulama sürüm bilgisi |
-| `app.manifest` | DPI ve görsel stil ayarları |
-| `MouseBot.ico` | Uygulama ikonu |
-| `build.bat` | Derleme betiği |
-| `dist/MouseBotSetup.exe` | Hazır kurulum dosyası |
+| `MouseBot.cs` | Application, UI and translations |
+| `Setup.cs` | Install / uninstall wizard |
+| `AppInfo.cs` | Application version info |
+| `app.manifest` | DPI and visual style settings |
+| `MouseBot.ico` | Application icon |
+| `build.bat` | Build script |
+| `dist/MouseBotSetup.exe` | Ready-to-use installer |
 
-Ayarlar `%APPDATA%\MouseBot\settings.ini` dosyasında saklanır.
+Settings are stored in `%APPDATA%\MouseBot\settings.ini`.

@@ -6,3 +6,9 @@
 # Windows
 Thumbs.db
 desktop.ini
+
+# Claude Code
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+.mcp.json
