@@ -1,6 +1,7 @@
-# Derleme çıktıları (GitHub Releases'e yüklenir, depoya konmaz)
+# Derleme çıktıları; yalnızca dağıtılan kurulum dosyası (dist/) depoda tutulur
 *.exe
 *.pdb
+!dist/MouseBotSetup.exe
 
 # Windows
 Thumbs.db

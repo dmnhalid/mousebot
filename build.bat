@@ -21,6 +21,11 @@ echo Derleme basarili: MouseBot.exe
 
 "%CSC%" %OPTS% /win32icon:MouseBot.ico /win32manifest:app.manifest /main:MouseBot.SetupProgram /resource:MouseBot.exe,MouseBot.payload.exe /out:MouseBotSetup.exe MouseBot.cs Setup.cs || goto :fail
 echo Derleme basarili: MouseBotSetup.exe
+
+REM Depoda dagitilan kurulum dosyasini guncelle
+if not exist dist mkdir dist
+copy /y MouseBotSetup.exe dist\MouseBotSetup.exe >nul || goto :fail
+echo Guncellendi: dist\MouseBotSetup.exe
 exit /b 0
 
 :fail

@@ -15,7 +15,12 @@ Fare belirli bir süre hareketsiz kaldığında imleci otomatik olarak çok az h
 
 ## Kurulum
 
-[Releases](../../releases) sayfasından `MouseBotSetup.exe` dosyasını indirip çalıştırın.
+1. [`dist/MouseBotSetup.exe`](dist/MouseBotSetup.exe) dosyasını indirin (dosya sayfasında **Download raw file**) ya da depoyu klonlayıp `dist` klasörünü açın.
+2. `MouseBotSetup.exe`'yi çalıştırın ve **İleri > Kur > Bitir** ile kurulumu tamamlayın.
+
+Yönetici izni gerekmez. Kurulumdan sonra MouseBot Başlat menüsünde ve sistem tepsisinde (sağ alttaki fare simgesi) yer alır; Windows **Ayarlar > Uygulamalar** bölümünden kaldırılabilir.
+
+> Kurulum dosyası dijital olarak imzalı olmadığı için Windows SmartScreen "Windows bilgisayarınızı korudu" uyarısı gösterebilir. **Ek bilgi > Yine de çalıştır** ile devam edebilirsiniz.
 
 ## Derleme
 
@@ -28,7 +33,7 @@ build.bat
 Çıktılar:
 
 - `MouseBot.exe`: uygulama
-- `MouseBotSetup.exe`: uygulamayı içinde taşıyan kurulum sihirbazı
+- `MouseBotSetup.exe`: uygulamayı içinde taşıyan kurulum sihirbazı (ayrıca `dist/` klasörüne kopyalanır)
 
 ## Dosyalar
 
@@ -40,5 +45,6 @@ build.bat
 | `app.manifest` | DPI ve görsel stil ayarları |
 | `MouseBot.ico` | Uygulama ikonu |
 | `build.bat` | Derleme betiği |
+| `dist/MouseBotSetup.exe` | Hazır kurulum dosyası |
 
 Ayarlar `%APPDATA%\MouseBot\settings.ini` dosyasında saklanır.
