@@ -1,0 +1,7 @@
+# Derleme çıktıları (GitHub Releases'e yüklenir, depoya konmaz)
+*.exe
+*.pdb
+
+# Windows
+Thumbs.db
+desktop.ini
