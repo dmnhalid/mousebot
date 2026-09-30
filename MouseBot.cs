@@ -44,9 +44,14 @@ namespace MouseBot
         [DllImport("user32.dll")] public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
         [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int RegisterWindowMessage(string s);
         [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hWnd, int msg, IntPtr w, IntPtr l);
+        [DllImport("user32.dll")] public static extern IntPtr RegisterPowerSettingNotification(IntPtr hWnd, ref Guid setting, int flags);
+        [DllImport("user32.dll")] public static extern bool UnregisterPowerSettingNotification(IntPtr h);
         [DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr hWnd, int attr, ref int value, int size);
 
         public const uint ES_CONTINUOUS = 0x80000000, ES_SYSTEM_REQUIRED = 0x1, ES_DISPLAY_REQUIRED = 0x2;
+        public const int WM_POWERBROADCAST = 0x0218, PBT_POWERSETTINGCHANGE = 0x8013;
+        public static readonly Guid GUID_LIDSWITCH_STATE_CHANGE = new Guid("BA3E0F4D-B817-4094-A2D1-D56379E6A0F3");
+        public static readonly Guid GUID_CONSOLE_DISPLAY_STATE = new Guid("6FE69556-704A-47A0-8F24-C28D936FDA47");
         public const uint MOD_ALT = 0x1, MOD_CONTROL = 0x2, MOD_NOREPEAT = 0x4000;
 
         public static double IdleSeconds()
@@ -877,6 +882,12 @@ namespace MouseBot
             if (m.Msg == 0x0312 && m.WParam.ToInt32() == TrayApp.HotkeyId) app.OnHotkey();
             else if (m.Msg == TrayApp.ShowMsg && TrayApp.ShowMsg != 0) app.ShowSettings(-1);
             else if (m.Msg == TrayApp.ExitMsg && TrayApp.ExitMsg != 0) app.BeginExit();
+            else if (m.Msg == Native.WM_POWERBROADCAST && m.WParam.ToInt32() == Native.PBT_POWERSETTINGCHANGE && m.LParam != IntPtr.Zero)
+            {
+                // POWERBROADCAST_SETTING: GUID (16) + DataLength (4) + Data
+                var guid = (Guid)Marshal.PtrToStructure(m.LParam, typeof(Guid));
+                app.OnPowerSetting(guid, Marshal.ReadInt32(m.LParam, 20));
+            }
             base.WndProc(ref m);
         }
     }
@@ -904,6 +915,9 @@ namespace MouseBot
         uint appliedEs;
         int direction = 1;
         bool hiddenHintShown;
+        // Kapak kapalı ve ekran kapalıyken Windows'un uykuya geçmesine izin ver
+        bool lidClosed, displayOff, suspending;
+        IntPtr lidNotify, displayNotify;
 
         public TrayApp()
         {
@@ -923,6 +937,10 @@ namespace MouseBot
             msgWin = new MsgWindow(this);
             ApplyHotkey();
             Startup.RefreshPath();
+            Guid g = Native.GUID_LIDSWITCH_STATE_CHANGE;
+            lidNotify = Native.RegisterPowerSettingNotification(msgWin.Handle, ref g, 0);
+            g = Native.GUID_CONSOLE_DISPLAY_STATE;
+            displayNotify = Native.RegisterPowerSettingNotification(msgWin.Handle, ref g, 0);
 
             SystemEvents.PowerModeChanged += OnPowerModeChanged;
             SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
@@ -1071,7 +1089,7 @@ namespace MouseBot
             }
 
             var st = State;
-            if (st == EngineState.Active && Native.IdleSeconds() >= S.IdleSeconds &&
+            if (st == EngineState.Active && !LetSystemSleep && Native.IdleSeconds() >= S.IdleSeconds &&
                 (DateTime.Now - lastAttempt).TotalSeconds >= Math.Min(S.IdleSeconds, 60))
             {
                 lastAttempt = DateTime.Now;
@@ -1111,7 +1129,7 @@ namespace MouseBot
         void ApplyKeepAwake(EngineState st)
         {
             uint want = Native.ES_CONTINUOUS;
-            if (st == EngineState.Active)
+            if (st == EngineState.Active && !LetSystemSleep)
             {
                 if (S.KeepAwakeApi) want |= Native.ES_SYSTEM_REQUIRED;
                 if (S.KeepDisplayOn) want |= Native.ES_DISPLAY_REQUIRED;
@@ -1210,9 +1228,32 @@ namespace MouseBot
             Tick();
         }
 
+        // Kapak kapatılıp ekran söndüğünde (ya da sistem uykuya geçerken) uyanık tutma isteğini bırak ve
+        // girdi göndermeyi durdur; aksi halde Modern Standby cihazlar uykuya giremez ya da ekran geri açılır.
+        // Harici monitörle kapak kapalı kullanımda ekran açık kaldığı için MouseBot çalışmaya devam eder.
+        bool LetSystemSleep { get { return suspending || (lidClosed && displayOff); } }
+
+        public void OnPowerSetting(Guid setting, int value)
+        {
+            if (setting == Native.GUID_LIDSWITCH_STATE_CHANGE) lidClosed = value == 0;
+            else if (setting == Native.GUID_CONSOLE_DISPLAY_STATE) displayOff = value == 0;
+            else return;
+            ApplyKeepAwake(State);
+        }
+
         void OnPowerModeChanged(object sender, PowerModeChangedEventArgs e)
         {
-            if (e.Mode == PowerModes.Resume) appliedEs = 0; // uykudan dönüşte yeniden uygula
+            if (e.Mode == PowerModes.Suspend)
+            {
+                suspending = true;
+                ApplyKeepAwake(State);
+            }
+            else if (e.Mode == PowerModes.Resume)
+            {
+                suspending = false;
+                appliedEs = 0; // uykudan dönüşte yeniden uygula
+                lastAttempt = DateTime.Now; // uyanır uyanmaz fare oynatma
+            }
         }
 
         void OnUserPreferenceChanged(object sender, UserPreferenceChangedEventArgs e)
@@ -1234,6 +1275,8 @@ namespace MouseBot
             SystemEvents.PowerModeChanged -= OnPowerModeChanged;
             SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
             if (HotkeyRegistered) Native.UnregisterHotKey(msgWin.Handle, HotkeyId);
+            if (lidNotify != IntPtr.Zero) Native.UnregisterPowerSettingNotification(lidNotify);
+            if (displayNotify != IntPtr.Zero) Native.UnregisterPowerSettingNotification(displayNotify);
             msgWin.DestroyHandle();
             Native.SetThreadExecutionState(Native.ES_CONTINUOUS);
             S.Save();
