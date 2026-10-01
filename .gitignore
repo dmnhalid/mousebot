@@ -3,6 +3,9 @@
 *.pdb
 !dist/MouseBotSetup.exe
 
+# build.bat uygulamanın logosundan üretir
+installer/images/
+
 # Windows
 Thumbs.db
 desktop.ini

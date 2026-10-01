@@ -4,6 +4,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
@@ -96,12 +97,16 @@ namespace MouseBot
         public bool Enabled = true;
         public bool KeepAwakeApi = true;
         public bool KeepDisplayOn = true;
+        public bool SleepOnLidClose = true;    // kapak kapanınca uyanık tutmayı bırak
         public bool ShowNotifications = true;
         public bool HotkeyEnabled = true;
         public bool PauseOnBattery = false;
         public bool ScheduleEnabled = false;
         public int StartMin = 9 * 60, EndMin = 18 * 60;
         public int Days = 62;                  // bit = DayOfWeek; 62 = Pzt-Cum
+        public bool TeamsSchedule = false;     // Teams'i yalnızca bu saatlerde açık tut
+        public int TeamsStartMin = 9 * 60, TeamsEndMin = 18 * 60;
+        public int TeamsDays = 62;
         public int Theme = 0;                  // 0 sistem, 1 açık, 2 koyu
         public string Language = "auto";       // "auto" veya tr/en/de/es/fr/ru/zh
         public int TotalJiggles, TodayJiggles;
@@ -133,6 +138,7 @@ namespace MouseBot
             s.Enabled = Bool(d, "Enabled", s.Enabled);
             s.KeepAwakeApi = Bool(d, "KeepAwakeApi", s.KeepAwakeApi);
             s.KeepDisplayOn = Bool(d, "KeepDisplayOn", s.KeepDisplayOn);
+            s.SleepOnLidClose = Bool(d, "SleepOnLidClose", s.SleepOnLidClose);
             s.ShowNotifications = Bool(d, "ShowNotifications", s.ShowNotifications);
             s.HotkeyEnabled = Bool(d, "HotkeyEnabled", s.HotkeyEnabled);
             s.PauseOnBattery = Bool(d, "PauseOnBattery", s.PauseOnBattery);
@@ -140,6 +146,10 @@ namespace MouseBot
             s.StartMin = Clamp(Int(d, "StartMin", s.StartMin), 0, 1439);
             s.EndMin = Clamp(Int(d, "EndMin", s.EndMin), 0, 1439);
             s.Days = Clamp(Int(d, "Days", s.Days), 0, 127);
+            s.TeamsSchedule = Bool(d, "TeamsSchedule", s.TeamsSchedule);
+            s.TeamsStartMin = Clamp(Int(d, "TeamsStartMin", s.TeamsStartMin), 0, 1439);
+            s.TeamsEndMin = Clamp(Int(d, "TeamsEndMin", s.TeamsEndMin), 0, 1439);
+            s.TeamsDays = Clamp(Int(d, "TeamsDays", s.TeamsDays), 0, 127);
             s.Theme = Clamp(Int(d, "Theme", s.Theme), 0, 2);
             string lg; s.Language = d.TryGetValue("Language", out lg) ? lg : "tr"; // v2.0 yalnızca Türkçeydi
             s.TotalJiggles = Math.Max(0, Int(d, "TotalJiggles", 0));
@@ -158,9 +168,12 @@ namespace MouseBot
                 File.WriteAllLines(FilePath, new[] {
                     "IdleSeconds=" + IdleSeconds, "Mode=" + Mode, "Pixels=" + Pixels,
                     "Enabled=" + Enabled, "KeepAwakeApi=" + KeepAwakeApi, "KeepDisplayOn=" + KeepDisplayOn,
+                    "SleepOnLidClose=" + SleepOnLidClose,
                     "ShowNotifications=" + ShowNotifications, "HotkeyEnabled=" + HotkeyEnabled,
                     "PauseOnBattery=" + PauseOnBattery, "ScheduleEnabled=" + ScheduleEnabled,
-                    "StartMin=" + StartMin, "EndMin=" + EndMin, "Days=" + Days, "Theme=" + Theme, "Language=" + Language,
+                    "StartMin=" + StartMin, "EndMin=" + EndMin, "Days=" + Days,
+                    "TeamsSchedule=" + TeamsSchedule, "TeamsStartMin=" + TeamsStartMin, "TeamsEndMin=" + TeamsEndMin, "TeamsDays=" + TeamsDays,
+                    "Theme=" + Theme, "Language=" + Language,
                     "TotalJiggles=" + TotalJiggles, "TodayJiggles=" + TodayJiggles, "TodayDate=" + TodayDate, "LastJiggle=" + LastJiggleTicks
                 });
             }
@@ -171,18 +184,33 @@ namespace MouseBot
         {
             var d = new Settings();
             IdleSeconds = d.IdleSeconds; Mode = d.Mode; Pixels = d.Pixels; Enabled = d.Enabled;
-            KeepAwakeApi = d.KeepAwakeApi; KeepDisplayOn = d.KeepDisplayOn; ShowNotifications = d.ShowNotifications;
+            KeepAwakeApi = d.KeepAwakeApi; KeepDisplayOn = d.KeepDisplayOn; SleepOnLidClose = d.SleepOnLidClose; ShowNotifications = d.ShowNotifications;
             HotkeyEnabled = d.HotkeyEnabled; PauseOnBattery = d.PauseOnBattery; ScheduleEnabled = d.ScheduleEnabled;
             StartMin = d.StartMin; EndMin = d.EndMin; Days = d.Days; Theme = d.Theme;
+            TeamsSchedule = d.TeamsSchedule; TeamsStartMin = d.TeamsStartMin; TeamsEndMin = d.TeamsEndMin; TeamsDays = d.TeamsDays;
         }
 
-        public bool InSchedule(DateTime now)
+        public bool InSchedule(DateTime now) { return InWindow(now, StartMin, EndMin, Days); }
+        public bool InTeamsHours(DateTime now) { return InWindow(now, TeamsStartMin, TeamsEndMin, TeamsDays); }
+
+        static bool InWindow(DateTime now, int start, int end, int days)
         {
-            if ((Days & (1 << (int)now.DayOfWeek)) == 0) return false;
+            if ((days & (1 << (int)now.DayOfWeek)) == 0) return false;
             int m = now.Hour * 60 + now.Minute;
-            if (StartMin == EndMin) return true;
-            if (StartMin < EndMin) return m >= StartMin && m < EndMin;
-            return m >= StartMin || m < EndMin; // gece yarısını aşan aralık
+            if (start == end) return true;
+            if (start < end) return m >= start && m < end;
+            return m >= start || m < end; // gece yarısını aşan aralık
+        }
+
+        // Teams saatlerinin bir sonraki başlangıcı (seçili gün yoksa null)
+        public DateTime? NextTeamsStart(DateTime now)
+        {
+            for (int i = 0; i <= 7; i++)
+            {
+                DateTime t = now.Date.AddDays(i).AddMinutes(TeamsStartMin);
+                if (t > now && (TeamsDays & (1 << (int)t.DayOfWeek)) != 0) return t;
+            }
+            return null;
         }
 
         static string Today { get { return DateTime.Today.ToString("yyyy-MM-dd"); } }
@@ -343,7 +371,7 @@ namespace MouseBot
                 "Envía la tecla F15, que los teclados no tienen. No afecta a ninguna aplicación y evita el estado 'ausente' de Teams/Slack.",
                 "Envoie la touche F15, absente des claviers. N'affecte aucune application et évite le statut « absent » de Teams/Slack.", "Отправляет клавишу F15, которой нет на клавиатурах. Не влияет на программы и не даёт Teams/Slack показать статус «Нет на месте».", "发送键盘上不存在的 F15 键。不会影响任何应用，还能防止 Teams/Slack 显示“离开”状态。" } },
 
-            { "tabs", new[] { "Genel|Zamanlama|Gelişmiş|İstatistik", "General|Schedule|Advanced|Statistics", "Allgemein|Zeitplan|Erweitert|Statistik", "General|Horario|Avanzado|Estadísticas", "Général|Planning|Avancé|Statistiques", "Общие|Расписание|Расширенные|Статистика", "常规|计划|高级|统计" } },
+            { "tabs", new[] { "Genel|Zamanlama|Gelişmiş|İstatistik|Teams", "General|Schedule|Advanced|Statistics|Teams", "Allgemein|Zeitplan|Erweitert|Statistik|Teams", "General|Horario|Avanzado|Estadísticas|Teams", "Général|Planning|Avancé|Statistiques|Teams", "Общие|Расписание|Расширенные|Статистика|Teams", "常规|计划|高级|统计|Teams" } },
             { "sent", new[] { "✓ Gönderildi", "✓ Sent", "✓ Gesendet", "✓ Enviado", "✓ Envoyé", "✓ Отправлено", "✓ 已发送" } },
             { "send_fail", new[] { "Gönderilemedi", "Failed to send", "Fehlgeschlagen", "No se pudo enviar", "Échec de l'envoi", "Не удалось", "发送失败" } },
             { "defaults", new[] { "Varsayılanlar", "Defaults", "Standard", "Restablecer", "Par défaut", "По умолчанию", "恢复默认" } },
@@ -367,8 +395,28 @@ namespace MouseBot
                 "Fuera del horario y con batería, MouseBot queda en espera; el equipo sigue su configuración de energía.",
                 "Hors planning et sur batterie, MouseBot attend ; l'ordinateur suit ses propres réglages d'alimentation.", "Вне расписания и при работе от батареи MouseBot ждёт; компьютер следует своим настройкам питания.", "在计划时间外或使用电池时，MouseBot 会等待；电脑按自身电源设置运行。" } },
 
+            { "tm_only", new[] { "Teams'i yalnızca bu saatlerde açık tut", "Keep Teams open only during these hours", "Teams nur zu diesen Zeiten geöffnet lassen", "Mantener Teams abierto solo en este horario", "Garder Teams ouvert uniquement à ces heures", "Держать Teams открытым только в эти часы", "仅在这些时间段保持 Teams 打开" } },
+            { "tm_hint", new[] {
+                "Saat başlayınca Teams açılır, bitince kapatılır. Toplantıdaysanız kapatma toplantı bitene kadar bekler. Arada elle açıp kapatmanıza karışılmaz.",
+                "Teams is opened when the hours start and closed when they end. If you're in a meeting, closing waits until it ends. Opening or closing it yourself in between is left alone.",
+                "Teams wird zu Beginn geöffnet und am Ende geschlossen, während eines Meetings erst nach dessen Ende. Manuelles Öffnen oder Schließen dazwischen bleibt unberührt.",
+                "Teams se abre al empezar el horario y se cierra al terminar. Si estás en una reunión, el cierre espera a que termine. Si lo abres o cierras tú entre medias, no se interviene.",
+                "Teams est ouvert au début de la plage et fermé à la fin ; pendant une réunion, la fermeture attend sa fin. L'ouvrir ou le fermer vous-même entre-temps reste possible.",
+                "Teams открывается в начале и закрывается в конце, а во время собрания — после его окончания. Открывать и закрывать его вручную в промежутке можно.",
+                "时间段开始时打开 Teams，结束时关闭。如果正在开会，会等会议结束后再关闭。期间手动打开或关闭不受影响。" } },
+            { "tm_missing", new[] { "Teams bu bilgisayarda bulunamadı.", "Teams wasn't found on this computer.", "Teams wurde auf diesem Computer nicht gefunden.", "No se encontró Teams en este equipo.", "Teams est introuvable sur cet ordinateur.", "Teams не найден на этом компьютере.", "未在这台电脑上找到 Teams。" } },
+            { "tm_closes", new[] { "Teams kapanış saati: {0}", "Teams closes at {0}", "Teams wird um {0} geschlossen", "Teams se cerrará a las {0}", "Teams sera fermé à {0}", "Teams закроется в {0}", "Teams 将于 {0} 关闭" } },
+            { "tm_opens", new[] { "Teams açılış saati: {0}", "Teams opens at {0}", "Teams wird um {0} geöffnet", "Teams se abrirá a las {0}", "Teams sera ouvert à {0}", "Teams откроется в {0}", "Teams 将于 {0} 打开" } },
+            { "tm_waiting", new[] { "Toplantı bitince Teams kapatılacak", "Teams will be closed when the meeting ends", "Teams wird nach dem Meeting geschlossen", "Teams se cerrará cuando termine la reunión", "Teams sera fermé à la fin de la réunion", "Teams закроется после окончания собрания", "会议结束后将关闭 Teams" } },
+            { "n_tm_open_t", new[] { "Teams açıldı", "Teams opened", "Teams geöffnet", "Teams abierto", "Teams ouvert", "Teams открыт", "Teams 已打开" } },
+            { "n_tm_open_b", new[] { "Teams saatleri başladı.", "Teams hours have started.", "Die Teams-Zeit hat begonnen.", "Ha empezado el horario de Teams.", "La plage horaire de Teams a commencé.", "Время Teams началось.", "Teams 时间段已开始。" } },
+            { "n_tm_close_t", new[] { "Teams kapatıldı", "Teams closed", "Teams geschlossen", "Teams cerrado", "Teams fermé", "Teams закрыт", "Teams 已关闭" } },
+            { "n_tm_close_b", new[] { "Teams saatleri dışındasınız.", "You're outside Teams hours.", "Sie sind außerhalb der Teams-Zeit.", "Estás fuera del horario de Teams.", "Vous êtes en dehors de la plage horaire de Teams.", "Сейчас вне времени Teams.", "当前不在 Teams 时间段内。" } },
+            { "n_tm_wait_t", new[] { "Teams toplantısı sürüyor", "Teams meeting in progress", "Teams-Meeting läuft", "Reunión de Teams en curso", "Réunion Teams en cours", "Идёт собрание Teams", "Teams 会议进行中" } },
+
             { "opt_api", new[] { "Uyku modunu engelle (Windows güç API'si)", "Prevent sleep (Windows power API)", "Energiesparmodus verhindern (Windows-API)", "Evitar la suspensión (API de Windows)", "Empêcher la veille (API Windows)", "Запретить спящий режим (API Windows)", "阻止睡眠（Windows 电源 API）" } },
             { "opt_display", new[] { "Ekranın kapanmasını engelle", "Keep the display on", "Bildschirm eingeschaltet lassen", "Mantener la pantalla encendida", "Garder l'écran allumé", "Не выключать экран", "保持屏幕常亮" } },
+            { "opt_lid", new[] { "Kapak kapanınca uykuya geçmesine izin ver", "Let the laptop sleep when the lid is closed", "Beim Zuklappen Energiesparen zulassen", "Permitir suspender al cerrar la tapa", "Autoriser la veille capot fermé", "Разрешать сон при закрытой крышке", "合上盖子时允许睡眠" } },
             { "opt_startup", new[] { "Windows açılışında otomatik başlat", "Start with Windows", "Mit Windows starten", "Iniciar con Windows", "Lancer au démarrage de Windows", "Запускать вместе с Windows", "开机时自动启动" } },
             { "opt_notify", new[] { "Bildirimleri göster", "Show notifications", "Benachrichtigungen anzeigen", "Mostrar notificaciones", "Afficher les notifications", "Показывать уведомления", "显示通知" } },
             { "opt_hotkey", new[] { "Kısayol: Ctrl+Alt+M ile aç / kapat", "Shortcut: Ctrl+Alt+M to toggle", "Tastenkürzel: Strg+Alt+M zum Umschalten", "Atajo: Ctrl+Alt+M para activar/desactivar", "Raccourci : Ctrl+Alt+M pour activer/désactiver", "Ctrl+Alt+M: включить / выключить", "快捷键：Ctrl+Alt+M 开启/关闭" } },
@@ -403,37 +451,100 @@ namespace MouseBot
             { "r_battery", new[] { "şarj bekleniyor", "waiting for charger", "wartet auf Strom", "esperando cargador", "attente du secteur", "ждём зарядку", "等待接通电源" } },
             { "idle_lbl", new[] { "Hareketsiz süre:  {0}", "Idle for:  {0}", "Inaktiv seit:  {0}", "Inactivo:  {0}", "Inactif depuis :  {0}", "Бездействие:  {0}", "闲置时间：  {0}" } },
             { "today_lbl", new[] { "Bugün {0} hareket", "{0} moves today", "Heute {0} Bewegungen", "{0} movimientos hoy", "{0} mouvements aujourd'hui", "Сегодня: {0}", "今日 {0} 次移动" } },
-            { "setup_title", new[] { "MouseBot Kurulumu", "MouseBot Setup", "MouseBot-Setup", "Instalación de MouseBot", "Installation de MouseBot", "Установка MouseBot", "MouseBot 安装程序" } },
-            { "steps", new[] { "Hoş geldiniz|Seçenekler|Kurulum|Tamamlandı", "Welcome|Options|Install|Finish", "Willkommen|Optionen|Installation|Fertig", "Bienvenida|Opciones|Instalación|Listo", "Bienvenue|Options|Installation|Terminé", "Приветствие|Параметры|Установка|Готово", "欢迎|选项|安装|完成" } },
-            { "w_head", new[] { "MouseBot'a hoş geldiniz", "Welcome to MouseBot", "Willkommen bei MouseBot", "Bienvenido a MouseBot", "Bienvenue dans MouseBot", "Добро пожаловать в MouseBot", "欢迎使用 MouseBot" } },
-            { "w_body", new[] { "Bu sihirbaz MouseBot'u bilgisayarınıza kuracak.\n\nMouseBot, fare hareketsiz kaldığında bilgisayarın uykuya geçmesini ve ekranın kilitlenmesini engeller.\n\nDevam etmek için İleri'ye tıklayın.", "This wizard will install MouseBot on your computer.\n\nMouseBot keeps your computer from sleeping or locking the screen while the mouse is idle.\n\nClick Next to continue.", "Dieser Assistent installiert MouseBot auf Ihrem Computer.\n\nMouseBot verhindert Energiesparmodus und Bildschirmsperre, solange die Maus nicht bewegt wird.\n\nKlicken Sie auf Weiter, um fortzufahren.", "Este asistente instalará MouseBot en tu equipo.\n\nMouseBot evita que el equipo se suspenda o bloquee la pantalla mientras el ratón está inactivo.\n\nHaz clic en Siguiente para continuar.", "Cet assistant va installer MouseBot sur votre ordinateur.\n\nMouseBot empêche la mise en veille et le verrouillage de l'écran lorsque la souris est inactive.\n\nCliquez sur Suivant pour continuer.", "Мастер установит MouseBot на ваш компьютер.\n\nMouseBot не даёт компьютеру уснуть или заблокировать экран, пока мышь не используется.\n\nНажмите «Далее», чтобы продолжить.", "本向导将在您的电脑上安装 MouseBot。\n\n当鼠标闲置时，MouseBot 可防止电脑进入睡眠或锁定屏幕。\n\n点击“下一步”继续。" } },
-            { "w_upgrade", new[] { "MouseBot zaten kurulu; en son sürüme güncellenecek.", "MouseBot is already installed and will be updated.", "MouseBot ist bereits installiert und wird aktualisiert.", "MouseBot ya está instalado y se actualizará.", "MouseBot est déjà installé et sera mis à jour.", "MouseBot уже установлен и будет обновлён.", "MouseBot 已安装，将进行更新。" } },
-            { "o_head", new[] { "Kurulum seçenekleri", "Installation options", "Installationsoptionen", "Opciones de instalación", "Options d'installation", "Параметры установки", "安装选项" } },
-            { "o_folder", new[] { "Kurulum klasörü", "Install folder", "Installationsordner", "Carpeta de instalación", "Dossier d'installation", "Папка установки", "安装文件夹" } },
-            { "o_browse", new[] { "Gözat...", "Browse...", "Durchsuchen...", "Examinar...", "Parcourir...", "Обзор...", "浏览..." } },
-            { "o_desktop", new[] { "Masaüstüne kısayol oluştur", "Create a desktop shortcut", "Desktopverknüpfung erstellen", "Crear acceso directo en el escritorio", "Créer un raccourci sur le bureau", "Создать ярлык на рабочем столе", "创建桌面快捷方式" } },
-            { "o_note", new[] { "Yönetici izni gerekmez; yalnızca bu kullanıcı için kurulur.", "No administrator rights needed; installs for the current user only.", "Keine Administratorrechte nötig; nur für den aktuellen Benutzer.", "No requiere permisos de administrador; solo para el usuario actual.", "Aucun droit administrateur requis ; pour l'utilisateur actuel uniquement.", "Права администратора не нужны; только для текущего пользователя.", "无需管理员权限；仅为当前用户安装。" } },
-            { "o_badpath", new[] { "Lütfen geçerli bir klasör seçin.", "Please choose a valid folder.", "Bitte wählen Sie einen gültigen Ordner.", "Elige una carpeta válida.", "Veuillez choisir un dossier valide.", "Выберите допустимую папку.", "请选择有效的文件夹。" } },
-            { "i_head", new[] { "Kuruluyor...", "Installing...", "Wird installiert...", "Instalando...", "Installation...", "Установка...", "正在安装..." } },
-            { "i_close_app", new[] { "Çalışan MouseBot kapatılıyor", "Closing running MouseBot", "Laufendes MouseBot wird beendet", "Cerrando MouseBot", "Fermeture de MouseBot", "Закрытие запущенного MouseBot", "正在关闭运行中的 MouseBot" } },
-            { "i_copy", new[] { "Dosyalar kopyalanıyor", "Copying files", "Dateien werden kopiert", "Copiando archivos", "Copie des fichiers", "Копирование файлов", "正在复制文件" } },
-            { "i_shortcuts", new[] { "Kısayollar oluşturuluyor", "Creating shortcuts", "Verknüpfungen werden erstellt", "Creando accesos directos", "Création des raccourcis", "Создание ярлыков", "正在创建快捷方式" } },
-            { "i_register", new[] { "Sisteme kaydediliyor", "Registering with Windows", "Registrierung bei Windows", "Registrando en Windows", "Enregistrement dans Windows", "Регистрация в Windows", "正在注册到 Windows" } },
-            { "f_head", new[] { "Kurulum tamamlandı", "Setup complete", "Installation abgeschlossen", "Instalación completada", "Installation terminée", "Установка завершена", "安装完成" } },
-            { "f_body", new[] { "MouseBot başarıyla kuruldu. Başlat menüsünden açabilir, Windows Ayarlar > Uygulamalar bölümünden kaldırabilirsiniz.", "MouseBot has been installed. Open it from the Start menu; you can uninstall it from Windows Settings > Apps.", "MouseBot wurde installiert. Starten Sie es über das Startmenü; deinstallieren können Sie es unter Einstellungen > Apps.", "MouseBot se ha instalado. Ábrelo desde el menú Inicio; puedes desinstalarlo en Configuración > Aplicaciones.", "MouseBot a été installé. Ouvrez-le depuis le menu Démarrer ; désinstallez-le via Paramètres > Applications.", "MouseBot установлен. Запускайте его из меню «Пуск»; удалить можно в «Параметры» > «Приложения».", "MouseBot 已成功安装。可从开始菜单打开，并可在 Windows 设置 > 应用 中卸载。" } },
-            { "f_launch", new[] { "MouseBot'u şimdi başlat", "Launch MouseBot now", "MouseBot jetzt starten", "Iniciar MouseBot ahora", "Lancer MouseBot maintenant", "Запустить MouseBot сейчас", "立即启动 MouseBot" } },
-            { "b_back", new[] { "< Geri", "< Back", "< Zurück", "< Atrás", "< Précédent", "< Назад", "< 上一步" } },
-            { "b_next", new[] { "İleri >", "Next >", "Weiter >", "Siguiente >", "Suivant >", "Далее >", "下一步 >" } },
-            { "b_install", new[] { "Kur", "Install", "Installieren", "Instalar", "Installer", "Установить", "安装" } },
-            { "b_cancel", new[] { "İptal", "Cancel", "Abbrechen", "Cancelar", "Annuler", "Отмена", "取消" } },
-            { "b_finish", new[] { "Bitir", "Finish", "Fertig stellen", "Finalizar", "Terminer", "Готово", "完成" } },
-            { "c_cancel", new[] { "Kurulumdan çıkılsın mı?", "Exit setup?", "Installation abbrechen?", "¿Salir de la instalación?", "Quitter l'installation ?", "Прервать установку?", "确定要退出安装吗？" } },
-            { "e_install", new[] { "Kurulum başarısız oldu:", "Setup failed:", "Installation fehlgeschlagen:", "La instalación falló:", "L'installation a échoué :", "Ошибка установки:", "安装失败：" } },
-            { "u_title", new[] { "MouseBot'u kaldır", "Uninstall MouseBot", "MouseBot deinstallieren", "Desinstalar MouseBot", "Désinstaller MouseBot", "Удаление MouseBot", "卸载 MouseBot" } },
-            { "u_confirm", new[] { "MouseBot ve tüm ayarları bilgisayarınızdan kaldırılsın mı?", "Remove MouseBot and all its settings from your computer?", "MouseBot und alle Einstellungen von diesem Computer entfernen?", "¿Quitar MouseBot y toda su configuración del equipo?", "Supprimer MouseBot et tous ses paramètres de cet ordinateur ?", "Удалить MouseBot и все его настройки с компьютера?", "确定要从电脑中移除 MouseBot 及其所有设置吗？" } },
-            { "u_done", new[] { "MouseBot kaldırıldı.", "MouseBot has been removed.", "MouseBot wurde entfernt.", "MouseBot se ha eliminado.", "MouseBot a été supprimé.", "MouseBot удалён.", "MouseBot 已卸载。" } },
             { "last_short", new[] { "son {0}", "last {0}", "zuletzt {0}", "último {0}", "dernier {0}", "посл. {0}", "上次 {0}" } },
         };
+    }
+
+    // Yeni Teams (MSIX, ms-teams.exe) ve klasik Teams (Teams.exe) için açma/kapatma
+    static class Teams
+    {
+        const string Family = "MSTeams_8wekyb3d8bbwe";
+        static readonly string[] ProcessNames = { "ms-teams", "Teams" };
+        const string ConsentStore = @"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\";
+
+        static string Local { get { return Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData); } }
+        static string NewAlias { get { return Path.Combine(Local, @"Microsoft\WindowsApps\ms-teams.exe"); } }
+        static string ClassicUpdater { get { return Path.Combine(Local, @"Microsoft\Teams\Update.exe"); } }
+
+        public static bool IsInstalled { get { return File.Exists(NewAlias) || File.Exists(ClassicUpdater); } }
+
+        // Yalnızca bu oturumdaki Teams işlemleri (aynı bilgisayardaki başka kullanıcılara dokunulmaz)
+        static List<Process> Processes()
+        {
+            int session = Process.GetCurrentProcess().SessionId;
+            var list = new List<Process>();
+            foreach (var name in ProcessNames)
+                foreach (var p in Process.GetProcessesByName(name))
+                {
+                    if (p.SessionId == session) list.Add(p);
+                    else p.Dispose();
+                }
+            return list;
+        }
+
+        public static bool IsRunning()
+        {
+            var list = Processes();
+            foreach (var p in list) p.Dispose();
+            return list.Count > 0;
+        }
+
+        public static bool Start()
+        {
+            try
+            {
+                if (File.Exists(NewAlias))
+                    Process.Start(new ProcessStartInfo("explorer.exe", @"shell:AppsFolder\" + Family + "!MSTeams") { UseShellExecute = true });
+                else if (File.Exists(ClassicUpdater))
+                    Process.Start(new ProcessStartInfo(ClassicUpdater, "--processStart \"Teams.exe\"") { UseShellExecute = false });
+                else return false;
+                return true;
+            }
+            catch { return false; }
+        }
+
+        // Teams pencere kapatılınca tepsiye küçülür; tamamen kapatmak için işlemler sonlandırılır
+        public static void Close()
+        {
+            foreach (var p in Processes())
+            {
+                try { p.Kill(); } catch { }
+                finally { p.Dispose(); }
+            }
+        }
+
+        // Toplantıda mı: Windows, mikrofonu/kamerayı kullanan uygulamanın kaydında LastUsedTimeStop'u 0 tutar
+        public static bool InCall()
+        {
+            foreach (var cap in new[] { "microphone", "webcam" })
+            {
+                if (InUse(ConsentStore + cap + "\\" + Family)) return true;
+                try
+                {
+                    using (var k = Registry.CurrentUser.OpenSubKey(ConsentStore + cap + "\\NonPackaged"))
+                        if (k != null)
+                            foreach (var name in k.GetSubKeyNames())
+                                if (name.EndsWith("#Teams.exe", StringComparison.OrdinalIgnoreCase) && InUse(ConsentStore + cap + "\\NonPackaged\\" + name))
+                                    return true;
+                }
+                catch { }
+            }
+            return false;
+        }
+
+        static bool InUse(string key)
+        {
+            try
+            {
+                using (var k = Registry.CurrentUser.OpenSubKey(key))
+                {
+                    if (k == null) return false;
+                    object start = k.GetValue("LastUsedTimeStart"), stop = k.GetValue("LastUsedTimeStop");
+                    return start != null && Convert.ToInt64(start) != 0 && stop != null && Convert.ToInt64(stop) == 0;
+                }
+            }
+            catch { return false; }
+        }
     }
 
     static class Startup
@@ -612,6 +723,50 @@ namespace MouseBot
             }
         }
 
+        // Inno Setup sihirbazının görselleri (build.bat üretir): sol şerit ve sağ üst küçük logo, her ekran ölçeği için
+        public static void WriteWizardImages(string dir, string version)
+        {
+            Directory.CreateDirectory(dir);
+            int[,] large = { { 164, 314 }, { 192, 386 }, { 246, 459 }, { 273, 556 }, { 328, 604 }, { 355, 700 }, { 410, 797 } };
+            for (int i = 0; i < large.GetLength(0); i++)
+            {
+                int w = large[i, 0], h = large[i, 1];
+                using (var bmp = new Bitmap(w, h, PixelFormat.Format24bppRgb))
+                {
+                    using (var g = Graphics.FromImage(bmp))
+                    {
+                        g.SmoothingMode = SmoothingMode.AntiAlias;
+                        g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+                        var r = new Rectangle(0, 0, w, h);
+                        using (var br = new LinearGradientBrush(r, Palette.Hex(0x064E3B), Palette.Hex(0x0F766E), 90f)) g.FillRectangle(br, r);
+
+                        float s = w * 0.46f, y = h * 0.2f;
+                        DrawLogo(g, (w - s) / 2, y, s, EngineState.Active);
+                        var fmt = new StringFormat { Alignment = StringAlignment.Center };
+                        using (var f = new Font("Segoe UI Semibold", w * 0.12f, FontStyle.Regular, GraphicsUnit.Pixel))
+                        using (var b = new SolidBrush(Color.White))
+                            g.DrawString("MouseBot", f, b, new RectangleF(0, y + s + w * 0.06f, w, w * 0.2f), fmt);
+                        using (var f = new Font("Segoe UI", w * 0.065f, FontStyle.Regular, GraphicsUnit.Pixel))
+                        using (var b = new SolidBrush(Color.FromArgb(180, 255, 255, 255)))
+                            g.DrawString("v" + version, f, b, new RectangleF(0, y + s + w * 0.23f, w, w * 0.12f), fmt);
+                    }
+                    bmp.Save(Path.Combine(dir, "wizard_" + w + ".bmp"), ImageFormat.Bmp);
+                }
+            }
+            foreach (int n in new[] { 55, 64, 83, 92, 110, 119, 138 })
+                using (var bmp = new Bitmap(n, n, PixelFormat.Format24bppRgb))
+                {
+                    using (var g = Graphics.FromImage(bmp))
+                    {
+                        g.SmoothingMode = SmoothingMode.AntiAlias;
+                        g.Clear(Color.White);
+                        float pad = n * 0.08f;
+                        DrawLogo(g, pad, pad, n - pad * 2, EngineState.Active);
+                    }
+                    bmp.Save(Path.Combine(dir, "wizard_small_" + n + ".bmp"), ImageFormat.Bmp);
+                }
+        }
+
         public static string Clock(double seconds)
         {
             int s = (int)Math.Max(0, Math.Round(seconds));
@@ -752,7 +907,31 @@ namespace MouseBot
         protected override void OnMouseClick(MouseEventArgs e)
         {
             base.OnMouseClick(e);
-            if (Items.Length > 0) Selected = Math.Min(Items.Length - 1, e.X * Items.Length / Math.Max(1, Width));
+            var r = Rects();
+            for (int i = 0; i < r.Length; i++)
+                if (e.X >= r[i].Left && e.X < r[i].Right) { Selected = i; return; }
+        }
+
+        // Sekme genişlikleri yazı uzunluğuyla orantılı (uzun çeviriler kesilmesin); toplam genişliği doldurur
+        RectangleF[] Rects()
+        {
+            var widths = new float[Items.Length];
+            float total = 0;
+            using (var f = new Font(Font, FontStyle.Bold))
+                for (int i = 0; i < Items.Length; i++)
+                {
+                    widths[i] = TextRenderer.MeasureText(Items[i], f).Width + 16;
+                    total += widths[i];
+                }
+            var rects = new RectangleF[Items.Length];
+            float x = 0;
+            for (int i = 0; i < Items.Length; i++)
+            {
+                float w = widths[i] * Width / Math.Max(1, total);
+                rects[i] = new RectangleF(x, 0, w, Height - 4);
+                x += w;
+            }
+            return rects;
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -760,18 +939,19 @@ namespace MouseBot
             var g = e.Graphics;
             g.Clear(BackColor);
             g.SmoothingMode = SmoothingMode.AntiAlias;
-            float w = (float)Width / Math.Max(1, Items.Length);
+            var rects = Rects();
             using (var pen = new Pen(Palette.Border)) g.DrawLine(pen, 0, Height - 1, Width, Height - 1);
             for (int i = 0; i < Items.Length; i++)
             {
                 bool sel = i == selected;
-                var rect = new Rectangle((int)(i * w), 0, (int)w, Height - 4);
+                var rect = Rectangle.Round(rects[i]);
+                float w = rects[i].Width, x0 = rects[i].X;
                 using (var f = new Font(Font, sel ? FontStyle.Bold : FontStyle.Regular))
                     TextRenderer.DrawText(g, Items[i], f, rect, sel ? Palette.Accent : Palette.Sub,
                         TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
                 if (sel)
                     using (var b = new SolidBrush(Palette.Accent))
-                    using (var p = Gfx.RoundRect(new RectangleF(i * w + w * 0.2f, Height - 3, w * 0.6f, 3), 1.5f))
+                    using (var p = Gfx.RoundRect(new RectangleF(x0 + w * 0.2f, Height - 3, w * 0.6f, 3), 1.5f))
                         g.FillPath(b, p);
             }
         }
@@ -918,6 +1098,9 @@ namespace MouseBot
         // Kapak kapalı ve ekran kapalıyken Windows'un uykuya geçmesine izin ver
         bool lidClosed, displayOff, suspending;
         IntPtr lidNotify, displayNotify;
+        // Teams saatleri: son bilinen durum (null = henüz uygulanmadı) ve toplantı bitimini bekleyen kapatma
+        bool? teamsInHours;
+        public bool TeamsCloseWaiting;
 
         public TrayApp()
         {
@@ -1097,6 +1280,7 @@ namespace MouseBot
             }
 
             ApplyKeepAwake(st);
+            TeamsTick();
 
             if (shownState != st) { tray.Icon = icons[st]; shownState = st; }
             string tip = "MouseBot • " + StateTitle(st) + "\n" + ShortInfo(st);
@@ -1124,6 +1308,47 @@ namespace MouseBot
                 S.Save();
             }
             return ok;
+        }
+
+        // Teams yalnızca saat aralığına girerken açılır ve çıkarken kapatılır; arada kullanıcının elle açıp kapatmasına
+        // karışılmaz. Oturum açılışındaki ilk 3 dakikada saat dışındaysa Teams'in kendi otomatik başlatması da kapatılır.
+        void TeamsTick()
+        {
+            if (!S.TeamsSchedule || !Teams.IsInstalled)
+            {
+                teamsInHours = null;
+                TeamsCloseWaiting = false;
+                return;
+            }
+
+            DateTime now = DateTime.Now;
+            bool inHours = S.InTeamsHours(now);
+            bool changed = teamsInHours != inHours;
+            teamsInHours = inHours;
+
+            if (inHours)
+            {
+                TeamsCloseWaiting = false;
+                if (changed && !Teams.IsRunning() && Teams.Start())
+                    Notify(Lang.T("n_tm_open_t"), Lang.T("n_tm_open_b"));
+                return;
+            }
+
+            if (!changed && !TeamsCloseWaiting && (now - StartedAt).TotalMinutes >= 3) return;
+            if (!Teams.IsRunning())
+            {
+                TeamsCloseWaiting = false;
+                return;
+            }
+            if (Teams.InCall())
+            {
+                if (!TeamsCloseWaiting) Notify(Lang.T("n_tm_wait_t"), Lang.T("tm_waiting") + ".");
+                TeamsCloseWaiting = true;
+                return;
+            }
+            Teams.Close();
+            TeamsCloseWaiting = false;
+            Notify(Lang.T("n_tm_close_t"), Lang.T("n_tm_close_b"));
         }
 
         void ApplyKeepAwake(EngineState st)
@@ -1231,7 +1456,8 @@ namespace MouseBot
         // Kapak kapatılıp ekran söndüğünde (ya da sistem uykuya geçerken) uyanık tutma isteğini bırak ve
         // girdi göndermeyi durdur; aksi halde Modern Standby cihazlar uykuya giremez ya da ekran geri açılır.
         // Harici monitörle kapak kapalı kullanımda ekran açık kaldığı için MouseBot çalışmaya devam eder.
-        bool LetSystemSleep { get { return suspending || (lidClosed && displayOff); } }
+        // Gelişmiş > "Kapak kapanınca uykuya geçmesine izin ver" kapatılırsa kapak kapalıyken de uyanık tutar.
+        bool LetSystemSleep { get { return suspending || (S.SleepOnLidClose && lidClosed && displayOff); } }
 
         public void OnPowerSetting(Guid setting, int value)
         {
@@ -1300,14 +1526,14 @@ namespace MouseBot
 
         LogoBox logo;
         Label lblHeader, lblStateTitle, lblStateDesc, lblIdle, lblToday;
-        ToggleSwitch tgMain, tgSchedule, tgBattery, tgApi, tgDisplay, tgStartup, tgNotify, tgHotkey;
+        ToggleSwitch tgMain, tgSchedule, tgBattery, tgApi, tgDisplay, tgLid, tgStartup, tgNotify, tgHotkey, tgTeams;
         Ring ring;
         TabStrip tabs;
         Panel[] pages;
-        NumericUpDown numMin, numSec, numPx, numSH, numSM, numEH, numEM;
+        NumericUpDown numMin, numSec, numPx, numSH, numSM, numEH, numEM, numTSH, numTSM, numTEH, numTEM;
         ComboBox cmbMode, cmbTheme, cmbLang;
-        Label lblModeHint, lblPx, lblPxUnit, lblHours, lblDays;
-        CheckBox[] days;
+        Label lblModeHint, lblPx, lblPxUnit, lblHours, lblDays, lblTHours, lblTDays, lblTStatus;
+        CheckBox[] days, teamsDays;
         Label stToday, stTotal, stLast, stUptime;
         Button btnTest;
         readonly System.Windows.Forms.Timer flash = new System.Windows.Forms.Timer { Interval = 1600 };
@@ -1341,7 +1567,7 @@ namespace MouseBot
 
             var content = new Card { Bounds = new Rectangle(16, 316, 428, 226) };
             Controls.Add(content);
-            pages = new Panel[4];
+            pages = new Panel[5];
             for (int i = 0; i < pages.Length; i++)
             {
                 pages[i] = new Panel { Bounds = new Rectangle(1, 1, PageW, 224), BackColor = Palette.Card, Visible = i == 0 };
@@ -1351,6 +1577,7 @@ namespace MouseBot
             BuildSchedule(pages[1]);
             BuildAdvanced(pages[2]);
             BuildStats(pages[3]);
+            BuildTeams(pages[4]);
 
             btnTest = Btn(this, Lang.T("test_now"), 16, 556, 140, 32, true);
             btnTest.Click += delegate
@@ -1482,29 +1709,64 @@ namespace MouseBot
             tgSchedule = ToggleRow(p, Lang.T("sched_only"), 14);
             tgSchedule.CheckedChanged += delegate { if (loading) return; S.ScheduleEnabled = tgSchedule.Checked; app.SettingsChanged(); UpdateEnables(); };
 
-            int y = 54;
-            lblHours = L(p, Lang.T("hours_range"), 16, y + 3, false);
-            numSH = Num(p, 150, y, 48, 0, 23);
+            lblHours = HoursRow(p, 54, out numSH, out numSM, out numEH, out numEM, (start, end) => { S.StartMin = start; S.EndMin = end; });
+            lblDays = DaysRow(p, 94, out days, mask => S.Days = mask);
+
+            tgBattery = ToggleRow(p, Lang.T("battery"), 138);
+            tgBattery.CheckedChanged += delegate { if (loading) return; S.PauseOnBattery = tgBattery.Checked; app.SettingsChanged(); };
+
+            p.Controls.Add(new Label
+            {
+                Bounds = new Rectangle(16, 176, 394, 44), BackColor = Palette.Card, ForeColor = Palette.Sub,
+                Text = Lang.T("sched_hint")
+            });
+        }
+
+        void BuildTeams(Panel p)
+        {
+            tgTeams = ToggleRow(p, Lang.T("tm_only"), 14);
+            tgTeams.CheckedChanged += delegate { if (loading) return; S.TeamsSchedule = tgTeams.Checked; app.SettingsChanged(); UpdateEnables(); RefreshStatus(); };
+            lblTHours = HoursRow(p, 54, out numTSH, out numTSM, out numTEH, out numTEM, (start, end) => { S.TeamsStartMin = start; S.TeamsEndMin = end; });
+            lblTDays = DaysRow(p, 94, out teamsDays, mask => S.TeamsDays = mask);
+
+            p.Controls.Add(new Label
+            {
+                Bounds = new Rectangle(16, 134, 394, 56), BackColor = Palette.Card, ForeColor = Palette.Sub,
+                Text = Lang.T("tm_hint")
+            });
+            lblTStatus = new Label { Bounds = new Rectangle(16, 194, 394, 22), BackColor = Palette.Card, ForeColor = Palette.Text };
+            p.Controls.Add(lblTStatus);
+        }
+
+        // Saat aralığı satırı: SS:dd – SS:dd
+        Label HoursRow(Panel p, int y, out NumericUpDown sh, out NumericUpDown sm, out NumericUpDown eh, out NumericUpDown em, Action<int, int> apply)
+        {
+            var label = L(p, Lang.T("hours_range"), 16, y + 3, false);
+            var a = Num(p, 150, y, 48, 0, 23);
             L(p, ":", 200, y + 2, false);
-            numSM = Num(p, 210, y, 48, 0, 59);
+            var b = Num(p, 210, y, 48, 0, 59);
             L(p, "–", 264, y + 2, false);
-            numEH = Num(p, 280, y, 48, 0, 23);
+            var c = Num(p, 280, y, 48, 0, 23);
             L(p, ":", 330, y + 2, false);
-            numEM = Num(p, 340, y, 48, 0, 59);
-            numSM.Increment = numEM.Increment = 5;
-            foreach (var n in new[] { numSH, numSM, numEH, numEM })
+            var d = Num(p, 340, y, 48, 0, 59);
+            b.Increment = d.Increment = 5;
+            foreach (var n in new[] { a, b, c, d })
                 n.ValueChanged += delegate
                 {
                     if (loading) return;
-                    S.StartMin = (int)numSH.Value * 60 + (int)numSM.Value;
-                    S.EndMin = (int)numEH.Value * 60 + (int)numEM.Value;
+                    apply((int)a.Value * 60 + (int)b.Value, (int)c.Value * 60 + (int)d.Value);
                     app.SettingsChanged();
                 };
+            sh = a; sm = b; eh = c; em = d;
+            return label;
+        }
 
-            y = 94;
-            lblDays = L(p, Lang.T("days_lbl"), 16, y + 5, false);
+        // Gün düğmeleri satırı (Pzt..Paz); seçim DayOfWeek bit maskesi olarak verilir
+        Label DaysRow(Panel p, int y, out CheckBox[] boxes, Action<int> apply)
+        {
+            var label = L(p, Lang.T("days_lbl"), 16, y + 5, false);
             string[] dayNames = Lang.List("days");
-            days = new CheckBox[7];
+            var list = new CheckBox[7];
             for (int i = 0; i < 7; i++)
             {
                 var cb = new CheckBox
@@ -1521,34 +1783,57 @@ namespace MouseBot
                     StyleDay(cb);
                     if (loading) return;
                     int mask = 0;
-                    for (int j = 0; j < 7; j++) if (days[j].Checked) mask |= 1 << DayIdx[j];
-                    S.Days = mask;
+                    for (int j = 0; j < 7; j++) if (list[j].Checked) mask |= 1 << DayIdx[j];
+                    apply(mask);
                     app.SettingsChanged();
                 };
-                days[i] = cb;
+                list[i] = cb;
                 p.Controls.Add(cb);
             }
+            boxes = list;
+            return label;
+        }
 
-            tgBattery = ToggleRow(p, Lang.T("battery"), 138);
-            tgBattery.CheckedChanged += delegate { if (loading) return; S.PauseOnBattery = tgBattery.Checked; app.SettingsChanged(); };
+        void SetDays(CheckBox[] boxes, int mask)
+        {
+            for (int i = 0; i < 7; i++) { boxes[i].Checked = (mask & (1 << DayIdx[i])) != 0; StyleDay(boxes[i]); }
+        }
 
-            p.Controls.Add(new Label
+        void UpdateTeamsStatus()
+        {
+            string text = "";
+            Color color = Palette.Text;
+            if (!Teams.IsInstalled) { text = Lang.T("tm_missing"); color = Palette.Amber; }
+            else if (S.TeamsSchedule)
             {
-                Bounds = new Rectangle(16, 176, 394, 44), BackColor = Palette.Card, ForeColor = Palette.Sub,
-                Text = Lang.T("sched_hint")
-            });
+                DateTime now = DateTime.Now;
+                if (app.TeamsCloseWaiting) { text = Lang.T("tm_waiting"); color = Palette.Amber; }
+                else if (S.InTeamsHours(now))
+                    text = Lang.F("tm_closes", Settings.HhMm(S.TeamsEndMin));
+                else
+                {
+                    DateTime? next = S.NextTeamsStart(now);
+                    if (next.HasValue)
+                        text = Lang.F("tm_opens", next.Value.Date == now.Date ? next.Value.ToString("HH:mm")
+                            : Lang.List("days")[((int)next.Value.DayOfWeek + 6) % 7] + " " + next.Value.ToString("HH:mm"));
+                }
+            }
+            if (lblTStatus.Text != text) lblTStatus.Text = text;
+            lblTStatus.ForeColor = color;
         }
 
         void BuildAdvanced(Panel p)
         {
-            tgApi = ToggleRow(p, Lang.T("opt_api"), 12);
-            tgDisplay = ToggleRow(p, Lang.T("opt_display"), 44);
-            tgStartup = ToggleRow(p, Lang.T("opt_startup"), 76);
-            tgNotify = ToggleRow(p, Lang.T("opt_notify"), 108);
-            tgHotkey = ToggleRow(p, Lang.T("opt_hotkey"), 140);
+            tgApi = ToggleRow(p, Lang.T("opt_api"), 8);
+            tgDisplay = ToggleRow(p, Lang.T("opt_display"), 38);
+            tgLid = ToggleRow(p, Lang.T("opt_lid"), 68);
+            tgStartup = ToggleRow(p, Lang.T("opt_startup"), 98);
+            tgNotify = ToggleRow(p, Lang.T("opt_notify"), 128);
+            tgHotkey = ToggleRow(p, Lang.T("opt_hotkey"), 158);
 
             tgApi.CheckedChanged += delegate { if (loading) return; S.KeepAwakeApi = tgApi.Checked; app.SettingsChanged(); };
             tgDisplay.CheckedChanged += delegate { if (loading) return; S.KeepDisplayOn = tgDisplay.Checked; app.SettingsChanged(); };
+            tgLid.CheckedChanged += delegate { if (loading) return; S.SleepOnLidClose = tgLid.Checked; app.SettingsChanged(); };
             tgNotify.CheckedChanged += delegate { if (loading) return; S.ShowNotifications = tgNotify.Checked; app.SettingsChanged(); };
             tgStartup.CheckedChanged += delegate
             {
@@ -1570,12 +1855,12 @@ namespace MouseBot
                         "MouseBot", MessageBoxButtons.OK, MessageBoxIcon.Information);
             };
 
-            L(p, Lang.T("theme"), 16, 184, false);
-            cmbTheme = Combo(p, 84, 181, 110, Lang.List("themes"));
-            L(p, Lang.T("language"), 212, 184, false);
+            L(p, Lang.T("theme"), 16, 196, false);
+            cmbTheme = Combo(p, 84, 193, 110, Lang.List("themes"));
+            L(p, Lang.T("language"), 212, 196, false);
             var langItems = new List<string> { Lang.T("lang_auto") };
             langItems.AddRange(Lang.Names);
-            cmbLang = Combo(p, 280, 181, 130, langItems.ToArray());
+            cmbLang = Combo(p, 280, 193, 130, langItems.ToArray());
             cmbLang.SelectedIndexChanged += delegate
             {
                 if (loading) return;
@@ -1714,6 +1999,9 @@ namespace MouseBot
             bool sch = tgSchedule.Checked;
             foreach (var n in new Control[] { numSH, numSM, numEH, numEM, lblHours, lblDays }) n.Enabled = sch;
             foreach (var d in days) d.Enabled = sch;
+            bool tm = tgTeams.Checked;
+            foreach (var n in new Control[] { numTSH, numTSM, numTEH, numTEM, lblTHours, lblTDays }) n.Enabled = tm;
+            foreach (var d in teamsDays) d.Enabled = tm;
         }
 
         void ResetDefaults()
@@ -1739,10 +2027,15 @@ namespace MouseBot
             tgSchedule.Checked = S.ScheduleEnabled;
             numSH.Value = S.StartMin / 60; numSM.Value = S.StartMin % 60;
             numEH.Value = S.EndMin / 60; numEM.Value = S.EndMin % 60;
-            for (int i = 0; i < 7; i++) { days[i].Checked = (S.Days & (1 << DayIdx[i])) != 0; StyleDay(days[i]); }
+            SetDays(days, S.Days);
+            tgTeams.Checked = S.TeamsSchedule;
+            numTSH.Value = S.TeamsStartMin / 60; numTSM.Value = S.TeamsStartMin % 60;
+            numTEH.Value = S.TeamsEndMin / 60; numTEM.Value = S.TeamsEndMin % 60;
+            SetDays(teamsDays, S.TeamsDays);
             tgBattery.Checked = S.PauseOnBattery;
             tgApi.Checked = S.KeepAwakeApi;
             tgDisplay.Checked = S.KeepDisplayOn;
+            tgLid.Checked = S.SleepOnLidClose;
             tgStartup.Checked = Startup.IsEnabled();
             tgNotify.Checked = S.ShowNotifications;
             tgHotkey.Checked = S.HotkeyEnabled;
@@ -1760,6 +2053,7 @@ namespace MouseBot
             double idle = Native.IdleSeconds();
 
             if (logo.State != st) { logo.State = st; logo.Invalidate(); }
+            UpdateTeamsStatus();
             lblHeader.Text = app.StateTitle(st) + (st == EngineState.Active ? "  •  " + Lang.T("hdr_protect") : "");
             lblHeader.ForeColor = sc;
             if (tgMain.Checked != S.Enabled) { loading = true; tgMain.Checked = S.Enabled; loading = false; }
@@ -1813,6 +2107,12 @@ namespace MouseBot
             if (args.Length == 2 && args[0] == "--make-icon")
             {
                 Gfx.WriteIco(args[1]);
+                return;
+            }
+            if (args.Length == 2 && args[0] == "--make-wizard-images")
+            {
+                var v = Assembly.GetExecutingAssembly().GetName().Version;
+                Gfx.WriteWizardImages(args[1], v.Major + "." + v.Minor + "." + v.Build);
                 return;
             }
 
